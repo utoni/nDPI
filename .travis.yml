@@ -2,6 +2,34 @@ language: c
 
 matrix:
   include:
+    - os: linux
+      compiler: x86_64-w64-mingw32-gcc
+      env: CC=i686-w64-mingw32-gcc XX=i686-w64-mingw32-g++ host_alias=i686-w64-mingw32 DISABLE_EXAMPLES=1
+      dist: bionic
+      addons:
+        apt:
+          packages:
+            - gcc-mingw-w64-base
+            - binutils-mingw-w64-i686
+            - gcc-mingw-w64-i686
+            - gcc-mingw-w64
+            - g++-mingw-w64-i686
+            - gcc-multilib
+            - g++-multilib
+
+    - os: linux
+      compiler: x86_64-w64-mingw32-gcc
+      env: CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ host_alias=x86_64-w64-mingw32 DISABLE_EXAMPLES=1
+      dist: bionic
+      addons:
+        apt:
+          packages:
+            - gcc-mingw-w64-base
+            - binutils-mingw-w64-x86-64
+            - gcc-mingw-w64-x86-64
+            - gcc-mingw-w64
+            - g++-mingw-w64-x86-64
+
     - os: osx
       compiler: clang
 
@@ -191,7 +219,8 @@ before_script:
 script:
   - if [ -n "$QA_FUZZ" ]; then ./configure --enable-fuzztargets ; else ./configure ; fi
   - make
-  - make -C example ndpiSimpleIntegration
+  - if [ -n "$DISABLE_EXAMPLES" ]; then make -C example ; fi
+  - if [ -n "$DISABLE_EXAMPLES" ]; then make -C example ndpiSimpleIntegration ; fi
   - make dist
 
 #after_script:
@@ -205,9 +234,9 @@ script:
 #- lcov --list coverage.info # debug before upload
 #- coveralls-lcov --repo-token ${COVERALLS_TOKEN} coverage.info # uploads to coveralls
 
-notifications:
-  email:
-    recipients:
-      - packager@ntop.org
-    on_success: never
-    on_failure: always
+#notifications:
+#  email:
+#    recipients:
+#      - packager@ntop.org
+#    on_success: never
+#    on_failure: always
