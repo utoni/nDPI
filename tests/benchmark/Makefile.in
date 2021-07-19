@@ -1,0 +1,49 @@
+MAKEFLAGS += --no-builtin-rules
+BUILD_BENCHMARK=@BUILD_BENCHMARK@
+
+ifneq ($(BUILD_BENCHMARK),)
+
+CC=@CC@
+CXX=@CXX@
+
+SRCHOME=../../src
+
+CXXFLAGS=-g -fPIC -DPIC -I$(SRCHOME)/include -I$(SRCHOME)/../example @PCAP_INC@ @CFLAGS@
+LIBNDPI=$(SRCHOME)/../example/libndpiReader.a $(SRCHOME)/lib/libndpi.a
+LDFLAGS=$(LIBNDPI) @PCAP_LIB@ @LIBS@ @ADDITIONAL_LIBS@ -lpthread -lm @LDFLAGS@
+HEADERS=$(SRCHOME)/include/ndpi_api.h $(SRCHOME)/include/ndpi_typedefs.h $(SRCHOME)/include/ndpi_protocol_ids.h \
+		$(SRCHOME)/../example/reader_util.h
+PREFIX?=@prefix@
+
+all: benchmark
+
+benchmark: $(LIBNDPI) benchmark.o
+	$(CXX) $(CXXFLAGS) benchmark.o -o $@ $(LDFLAGS)
+
+%.o: %.cpp $(HEADERS) Makefile
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	/bin/rm -f *.o benchmark
+	/bin/rm -f .*.o.cmd .*.o.d
+	/bin/rm -rf build
+
+install:
+	echo ""
+
+distclean: clean
+	/bin/rm -f Makefile
+
+else
+
+all: benchmark
+benchmark:
+clean:
+install:
+distclean:
+%.o: %.cpp
+
+endif
+
+distdir:
+	find . -maxdepth 1 -type f -name '*.cpp' -o -name '*.h' -o -name '*.py' | xargs -I'{}' cp '{}' '$(distdir)/{}'

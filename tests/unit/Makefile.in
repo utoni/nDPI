@@ -1,11 +1,13 @@
+MAKEFLAGS += --no-builtin-rules
+
 CC=@CC@
 CXX=@CXX@
 
 SRCHOME=../../src
 
-CFLAGS=-g -fPIC -DPIC -I$(SRCHOME)/include @JSONC_CFLAGS@ @PCAP_INC@ @CFLAGS@
+CFLAGS=-g -fPIC -DPIC -I$(SRCHOME)/include @PCAP_INC@ @CFLAGS@
 LIBNDPI=$(SRCHOME)/lib/libndpi.a
-LDFLAGS=$(LIBNDPI) @PCAP_LIB@ @LIBS@ @ADDITIONAL_LIBS@ @JSONC_LIBS@ -lpthread -lm @LDFLAGS@
+LDFLAGS=$(LIBNDPI) @PCAP_LIB@ @LIBS@ @ADDITIONAL_LIBS@ -lpthread -lm @LDFLAGS@
 HEADERS=$(SRCHOME)/include/ndpi_api.h $(SRCHOME)/include/ndpi_typedefs.h $(SRCHOME)/include/ndpi_protocol_ids.h
 OBJS=unit
 PREFIX?=@prefix@
@@ -30,7 +32,7 @@ install:
 	echo ""
 
 distdir:
-
+	find . -maxdepth 1 -type f -name '*.c' -o -name '*.h' -o -name '*.py' | xargs -I'{}' cp '{}' '$(distdir)/{}'
 
 distclean: clean
 	/bin/rm -f Makefile

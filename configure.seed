@@ -7,7 +7,16 @@ AM_INIT_AUTOMAKE([foreign subdir-objects])
 
 AC_PREFIX_DEFAULT(/usr)
 
-EXTRA_TARGETS="example tests tests/unit tests/dga"
+EXTRA_TARGETS="example tests tests/unit tests/dga tests/benchmark"
+
+AC_ARG_WITH(benchmark, AS_HELP_STRING([--with-benchmark], [Build benchmark test. Requires libbenchmark.]))
+AS_IF([test "${with_benchmark+set}" = set],[
+  PKG_CHECK_MODULES([BENCHMARK], [benchmark], [BENCHMARK_LIBS=`pkg-config --libs benchmark` BENCHMARK_CFLAGS=`pkg-config --cflags benchmark`])
+  LIBS="$LIBS $BENCHMARK_LIBS"
+  CFLAGS="$CFLAGS $BENCHMARK_CFLAGS"
+  BUILD_BENCHMARK=1
+])
+
 AC_ARG_WITH(only-libndpi,  AS_HELP_STRING([--with-only-libndpi], [Build only libndpi (no examples, tests etc)]))
 AS_IF([test "${with_only_libndpi+set}" = set],[
   EXTRA_TARGETS=""
@@ -236,7 +245,7 @@ if test "${with_maxminddb+set}" = set; then :
   fi
 fi
 
-AC_CONFIG_FILES([Makefile example/Makefile example/Makefile.dpdk tests/Makefile tests/unit/Makefile tests/dga/Makefile libndpi.pc src/include/ndpi_define.h src/lib/Makefile python/Makefile fuzz/Makefile src/include/ndpi_api.h])
+AC_CONFIG_FILES([Makefile example/Makefile example/Makefile.dpdk tests/Makefile tests/unit/Makefile tests/benchmark/Makefile tests/dga/Makefile libndpi.pc src/include/ndpi_define.h src/lib/Makefile python/Makefile fuzz/Makefile src/include/ndpi_api.h])
 AC_CONFIG_FILES([tests/do.sh], [chmod +x tests/do.sh])
 AC_CONFIG_FILES([tests/do_valgrind.sh], [chmod +x tests/do_valgrind.sh])
 AC_CONFIG_HEADERS(src/include/ndpi_config.h)
@@ -256,6 +265,7 @@ AC_SUBST(NDPI_API_VERSION)
 AC_SUBST(EXTRA_TARGETS)
 AC_SUBST(BUILD_MINGW)
 AC_SUBST(BUILD_FUZZTARGETS)
+AC_SUBST(BUILD_BENCHMARK)
 AC_SUBST(JSONC_CFLAGS)
 AC_SUBST(JSONC_LIBS)
 AC_SUBST(GCRYPT_ENABLED)
