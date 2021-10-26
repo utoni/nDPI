@@ -1791,7 +1791,10 @@ const char* ndpi_risk2str(ndpi_risk_enum risk) {
     
   case NDPI_DNS_FRAGMENTED:
     return("Fragmented DNS message");
-      
+
+  case NDPI_DNS_FAST_FLUX:
+    return("Possible Fast-Flux botnet");
+
   default:
     snprintf(buf, sizeof(buf), "%d", (int)risk);
     return(buf);
