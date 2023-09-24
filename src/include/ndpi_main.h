@@ -130,7 +130,7 @@ extern "C" {
 					     const char **file, const char **func, u_int32_t * line);
 #endif
 
-  /** Checks when the @p payload starts with the string literal @p str.
+  /** Checks when the @payload starts with the string literal @p str.
    * When the string is larger than the payload, check fails.
    * @return non-zero if check succeeded
    */

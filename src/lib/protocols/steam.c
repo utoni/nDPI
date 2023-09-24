@@ -103,6 +103,18 @@ static void ndpi_check_steam_tcp(struct ndpi_detection_module_struct *ndpi_struc
   }
 }
 
+static void ndpi_check_steamdiscover(struct ndpi_detection_module_struct *ndpi_struct,
+                                     struct ndpi_flow_struct *flow)
+{
+  struct ndpi_packet_struct *packet = &ndpi_struct->packet;
+
+  if (ndpi_match_strprefix(packet->payload, packet->payload_packet_len,
+                           "\xff\xff\xff\xff\x21\x4c\x5f\xa0"))
+  {
+    ndpi_int_steam_add_connection(ndpi_struct, flow);
+  }
+}
+
 static void ndpi_check_steam_udp1(struct ndpi_detection_module_struct *ndpi_struct, struct ndpi_flow_struct *flow) {
   struct ndpi_packet_struct *packet = &ndpi_struct->packet;
   u_int32_t payload_len = packet->payload_packet_len;
@@ -262,7 +274,8 @@ static void ndpi_search_steam(struct ndpi_detection_module_struct *ndpi_struct, 
       NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
       return;
     }
-    
+
+    ndpi_check_steamdiscover(ndpi_struct, flow);
     ndpi_check_steam_udp1(ndpi_struct, flow);
 	
     if(flow->detected_protocol_stack[0] == NDPI_PROTOCOL_STEAM)
