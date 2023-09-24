@@ -1509,7 +1509,8 @@ static void ndpi_int_tls_add_connection(struct ndpi_detection_module_struct *ndp
 
   ndpi_set_detected_protocol(ndpi_struct, flow, protocol, protocol, NDPI_CONFIDENCE_DPI);
 
-  tlsInitExtraPacketProcessing(ndpi_struct, flow);
+  if(!flow->extra_packets_func)
+    tlsInitExtraPacketProcessing(ndpi_struct, flow);
 }
 
 /* **************************************** */
@@ -2543,7 +2544,7 @@ int processClientServerHello(struct ndpi_detection_module_struct *ndpi_struct,
 		}
 	      } else if(extension_id == 65037 /* ECH: latest drafts */) {
 #ifdef DEBUG_TLS
-		printf("Client TLS: ECH version 0x%x\n", extension_id;
+		printf("Client TLS: ECH version 0x%x\n", extension_id);
 #endif
 		/* Beginning with draft-08, the version is the same as the code point
 		   for the "encrypted_client_hello" extension. */

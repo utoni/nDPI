@@ -1,8 +1,8 @@
 Guessed flow protos:	0
 
-DPI Packets (TCP):	5	(5.00 pkts/flow)
+DPI Packets (TCP):	4	(4.00 pkts/flow)
 Confidence DPI              : 1 (flows)
-Num dissector calls: 123 (123.00 diss/flow)
+Num dissector calls: 121 (121.00 diss/flow)
 LRU cache ookla:      0/0/0 (insert/search/found)
 LRU cache bittorrent: 0/0/0 (insert/search/found)
 LRU cache zoom:       0/0/0 (insert/search/found)
@@ -17,9 +17,9 @@ Automa tls cert:      0/0 (search/found)
 Automa risk mask:     0/0 (search/found)
 Automa common alpns:  0/0 (search/found)
 Patricia risk mask:   0/0 (search/found)
-Patricia risk:        2/0 (search/found)
+Patricia risk:        0/0 (search/found)
 Patricia protocols:   2/0 (search/found)
 
-eDonkey	17	2016	1
+HAProxy	15	6441	1
 
-	1	TCP 201.15.177.227:1754 <-> 135.192.214.240:7551 [proto: 36/eDonkey][IP: 0/Unknown][ClearText][Confidence: DPI][DPI packets: 5][cat: Download/7][6 pkts/598 bytes <-> 11 pkts/1418 bytes][Goodput ratio: 41/56][57.40 sec][bytes ratio: -0.407 (Download)][IAT c2s/s2c min/avg/max/stddev: 5/91 5347/4749 12107/12106 5400/4962][Pkt Len c2s/s2c min/avg/max/stddev: 60/60 100/129 178/186 55/63][Risk: ** Unsafe Protocol **][Risk Score: 10][PLAIN TEXT (VeryCD)][Plen Bins: 0,0,0,25,75,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+	1	TCP 172.16.17.1:48502 <-> 172.16.16.117:443 [proto: 350/HAProxy][IP: 0/Unknown][ClearText][Confidence: DPI][DPI packets: 4][cat: Web/5][8 pkts/1268 bytes <-> 7 pkts/5173 bytes][Goodput ratio: 58/91][0.10 sec][bytes ratio: -0.606 (Download)][IAT c2s/s2c min/avg/max/stddev: 0/0 16/9 45/26 17/10][Pkt Len c2s/s2c min/avg/max/stddev: 66/66 158/739 489/2962 160/1037][PLAIN TEXT (PROXY TCP)][Plen Bins: 16,0,0,0,0,0,0,0,16,16,0,0,0,16,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,16,16]

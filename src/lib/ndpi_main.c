@@ -2150,6 +2150,14 @@ static void ndpi_init_protocol_defaults(struct ndpi_detection_module_struct *ndp
                           "HTTP2", NDPI_PROTOCOL_CATEGORY_WEB,
                           ndpi_build_default_ports(ports_a, 0, 0, 0, 0, 0) /* TCP */,
                           ndpi_build_default_ports(ports_b, 0, 0, 0, 0, 0) /* UDP */);
+  ndpi_set_proto_defaults(ndpi_str, 1 /* cleartext */, 0 /* nw proto */, NDPI_PROTOCOL_SAFE, NDPI_PROTOCOL_HAPROXY,
+              "HAProxy", NDPI_PROTOCOL_CATEGORY_WEB,
+              ndpi_build_default_ports(ports_a, 0, 0, 0, 0, 0) /* TCP */,
+              ndpi_build_default_ports(ports_b, 0, 0, 0, 0, 0) /* UDP */);
+  ndpi_set_proto_subprotocols(ndpi_str, NDPI_PROTOCOL_HAPROXY,
+              NDPI_PROTOCOL_CALL_EXCLUDED,
+              NDPI_PROTOCOL_TLS,
+              NDPI_PROTOCOL_NO_MORE_SUBPROTOCOLS);
 
 #ifdef CUSTOM_NDPI_PROTOCOLS
 #include "../../../nDPI-custom/custom_ndpi_main.c"
@@ -5216,6 +5224,9 @@ static int ndpi_callback_init(struct ndpi_detection_module_struct *ndpi_str) {
   /* HTTP/2 */
   init_http2_dissector(ndpi_str, &a);
 
+  /* HAProxy */
+  init_haproxy_dissector(ndpi_str, &a);
+
 #ifdef CUSTOM_NDPI_PROTOCOLS
 #include "../../../nDPI-custom/custom_ndpi_main_init.c"
 #endif
@@ -6143,6 +6154,7 @@ static u_int32_t check_ndpi_subprotocols(struct ndpi_detection_module_struct * c
                                          u_int16_t detected_protocol)
 {
   u_int32_t num_calls = 0, a;
+  int call_excluded = 0;
 
   if(detected_protocol == NDPI_PROTOCOL_UNKNOWN)
   {
@@ -6152,6 +6164,11 @@ static u_int32_t check_ndpi_subprotocols(struct ndpi_detection_module_struct * c
   for (a = 0; a < ndpi_str->proto_defaults[detected_protocol].subprotocol_count; a++)
   {
     u_int16_t subproto_id = ndpi_str->proto_defaults[detected_protocol].subprotocols[a];
+    if(subproto_id == (uint16_t)NDPI_PROTOCOL_CALL_EXCLUDED)
+    {
+      call_excluded = 1;
+      continue;
+    }
     if(subproto_id == (uint16_t)NDPI_PROTOCOL_MATCHED_BY_CONTENT ||
         subproto_id == flow->detected_protocol_stack[0] ||
         subproto_id == flow->detected_protocol_stack[1])
@@ -6163,7 +6180,7 @@ static u_int32_t check_ndpi_subprotocols(struct ndpi_detection_module_struct * c
     if((ndpi_str->callback_buffer[subproto_index].ndpi_selection_bitmask & ndpi_selection_packet) ==
          ndpi_str->callback_buffer[subproto_index].ndpi_selection_bitmask &&
         NDPI_BITMASK_COMPARE(flow->excluded_protocol_bitmask,
-                             ndpi_str->callback_buffer[subproto_index].excluded_protocol_bitmask) == 0 &&
+                             ndpi_str->callback_buffer[subproto_index].excluded_protocol_bitmask) == call_excluded &&
         NDPI_BITMASK_COMPARE(ndpi_str->callback_buffer[subproto_index].detection_bitmask,
                              detection_bitmask) != 0)
     {

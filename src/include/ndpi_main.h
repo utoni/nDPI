@@ -38,6 +38,7 @@
 /* used by ndpi_set_proto_subprotocols */
 #define NDPI_PROTOCOL_NO_MORE_SUBPROTOCOLS (-1)
 #define NDPI_PROTOCOL_MATCHED_BY_CONTENT (-2)
+#define NDPI_PROTOCOL_CALL_EXCLUDED (-3)
 
 #ifdef __cplusplus
 extern "C" {
