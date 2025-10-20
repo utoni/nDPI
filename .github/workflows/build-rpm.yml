@@ -1,13 +1,21 @@
 name: RPM Build
 on:
-  workflow_dispatch:
-  schedule:
-    # At the end of every day
-    - cron: '0 0 * * *'
+  push:
+    branches:
+      - dev
+  pull_request:
+    branches:
+      - dev
+    types: [opened, synchronize, reopened]
+#on:
+#  workflow_dispatch:
+#  schedule:
+#    # At the end of every day
+#   - cron: '0 0 * * *'
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: almalinux/8-minimal
     steps:
     - uses: actions/checkout@v4
 
@@ -18,8 +26,6 @@ jobs:
 
     - name: Configure nDPI
       run: |
-        # fake CentOS 7 env
-        echo 'CentOS Linux release 7.9.2009 (Core)' | sudo tee /etc/centos-release
         # symlink source directory for ndpi.spec
         ln -sr . $HOME/nDPI
         ./autogen.sh
