@@ -556,15 +556,18 @@ int tcpReassemblyUnitTest(void)
   r = ndpi_tcp_reassembly_alloc(0, reasm_test_cb, NULL);
   assert(r != NULL);
 
-  /* ISN near the 32-bit wrap boundary */
-  assert(ndpi_tcp_reassembly_process(r, 0, 0xFFFFFFF8u, 1, NULL, 0) == 0);
+  /*
+   * ISN chosen so that data crosses the 32-bit wrap boundary:
+   *   SYN at 0xFFFFFFFC -> next_seq = 0xFFFFFFFD
+   *   "WRAP" (4 bytes) at 0xFFFFFFFD -> wraps to 0x00000001
+   *   "OK"   (2 bytes) at 0x00000001 -> ends at 0x00000003
+   */
+  assert(ndpi_tcp_reassembly_process(r, 0, 0xFFFFFFFCu, 1, NULL, 0) == 0);
 
-  /* First segment spans the wrap point */
-  assert(ndpi_tcp_reassembly_process(r, 0, 0xFFFFFFF9u, 0,
+  assert(ndpi_tcp_reassembly_process(r, 0, 0xFFFFFFFDu, 0,
                                      (const u_int8_t *)"WRAP", 4) == 0);
 
-  /* Second segment is right after the wrap */
-  assert(ndpi_tcp_reassembly_process(r, 0, 0xFFFFFFFDu, 0,
+  assert(ndpi_tcp_reassembly_process(r, 0, 0x00000001u, 0,
                                      (const u_int8_t *)"OK", 2) == 0);
 
   assert(reasm_collected_len[0] == 6);

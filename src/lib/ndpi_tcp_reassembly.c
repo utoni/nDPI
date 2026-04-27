@@ -391,12 +391,10 @@ void ndpi_tcp_reassembly_get_stats(const struct ndpi_tcp_reassembly *r,
   stats->ooo_buf_size   = r->streams[direction].ooo_buf_size;
   stats->ooo_seg_count  = 0;
 
-  {
-    const struct ndpi_tcp_segment *seg = r->streams[direction].ooo_list;
-    while(seg) {
-      stats->ooo_seg_count++;
-      seg = seg->next;
-    }
+  const struct ndpi_tcp_segment *seg = r->streams[direction].ooo_list;
+  while(seg) {
+    stats->ooo_seg_count++;
+    seg = seg->next;
   }
 }
 
