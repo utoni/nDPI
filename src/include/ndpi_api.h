@@ -2437,6 +2437,105 @@ extern "C" {
 
   /* ******************************* */
 
+  /* -----------------------------------------------------------------------
+   * TCP Reassembly Engine
+   *
+   * Reassembles TCP byte streams from individual segments, handling
+   * out-of-order delivery, retransmissions, and overlapping segments.
+   *
+   * Usage example:
+   *
+   *   void my_cb(struct ndpi_tcp_reassembly *r, u_int8_t dir,
+   *              u_int32_t seq, const u_int8_t *data, u_int16_t len,
+   *              void *ud) {
+   *     // process reassembled in-order TCP stream data
+   *   }
+   *
+   *   struct ndpi_tcp_reassembly *r =
+   *       ndpi_tcp_reassembly_alloc(0, my_cb, NULL);
+   *
+   *   // For each TCP segment: parse IP/TCP headers then call:
+   *   ndpi_tcp_reassembly_process(r, direction, seq, syn, payload, plen);
+   *
+   *   ndpi_tcp_reassembly_free(r);
+   * ----------------------------------------------------------------------- */
+
+  /**
+   * Allocate a TCP reassembly engine.
+   *
+   * @param max_ooo_buf_size  Maximum bytes buffered per-direction for
+   *                          out-of-order segments.  Pass 0 to use the
+   *                          default (NDPI_TCP_REASSEMBLY_DEFAULT_MAX_OOO_BUF).
+   * @param callback          Function called whenever reassembled in-order
+   *                          data is available.  May be NULL.
+   * @param userdata          Opaque pointer forwarded to every callback call.
+   * @return                  Pointer to a new reassembly handle, or NULL on
+   *                          allocation failure.
+   */
+  struct ndpi_tcp_reassembly *
+  ndpi_tcp_reassembly_alloc(u_int32_t              max_ooo_buf_size,
+                            ndpi_tcp_reassembly_cb_t callback,
+                            void                  *userdata);
+
+  /**
+   * Free a TCP reassembly engine and all buffered data.
+   *
+   * @param r  Handle returned by ndpi_tcp_reassembly_alloc().  NULL is safe.
+   */
+  void ndpi_tcp_reassembly_free(struct ndpi_tcp_reassembly *r);
+
+  /**
+   * Process one TCP segment.
+   *
+   * Delivers in-order data immediately via the registered callback.
+   * Out-of-order segments are buffered until preceding gaps are filled.
+   * Duplicate / retransmitted data is silently discarded.
+   *
+   * @param r            Reassembly handle.
+   * @param direction    0 = client-to-server, 1 = server-to-client.
+   * @param seq          TCP sequence number of the first payload byte
+   *                     (host byte order).
+   * @param syn          Non-zero if the SYN flag is set in this segment.
+   *                     When set, @p seq is consumed as the ISN and no
+   *                     payload delivery takes place for this call.
+   * @param payload      Pointer to the TCP payload bytes.  May be NULL
+   *                     when @p payload_len is 0.
+   * @param payload_len  Number of payload bytes.
+   * @return             0 on success, -1 on invalid arguments or if the
+   *                     out-of-order budget is exhausted.
+   */
+  int ndpi_tcp_reassembly_process(struct ndpi_tcp_reassembly *r,
+                                  u_int8_t        direction,
+                                  u_int32_t       seq,
+                                  u_int8_t        syn,
+                                  const u_int8_t *payload,
+                                  u_int16_t       payload_len);
+
+  /**
+   * Retrieve per-direction statistics.
+   *
+   * @param r          Reassembly handle.
+   * @param direction  0 = client-to-server, 1 = server-to-client.
+   * @param stats      Output: statistics for the requested direction.
+   */
+  void ndpi_tcp_reassembly_get_stats(const struct ndpi_tcp_reassembly *r,
+                                     u_int8_t                          direction,
+                                     ndpi_tcp_reassembly_stats        *stats);
+
+  /**
+   * Reset the reassembly state for one direction.
+   *
+   * Discards all buffered out-of-order segments and resets the sequence
+   * number tracking.  Useful when a TCP RST is observed.
+   *
+   * @param r          Reassembly handle.
+   * @param direction  0 = client-to-server, 1 = server-to-client.
+   */
+  void ndpi_tcp_reassembly_reset(struct ndpi_tcp_reassembly *r,
+                                 u_int8_t direction);
+
+  /* ******************************* */
+
   char* ndpi_get_flow_risk_info(struct ndpi_flow_struct *flow,
 				char *out, u_int out_len,
 				u_int8_t use_json);

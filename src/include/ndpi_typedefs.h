@@ -1375,6 +1375,39 @@ typedef void ndpi_bitmap64_fuse; /* probabilistic */
 typedef void ndpi_bitmap_iterator;
 typedef void ndpi_filter;
 
+/* TCP reassembly engine */
+struct ndpi_tcp_reassembly;  /* Opaque handle – defined in ndpi_tcp_reassembly.c */
+
+/* Default maximum bytes buffered per direction for out-of-order segments */
+#define NDPI_TCP_REASSEMBLY_DEFAULT_MAX_OOO_BUF  (64 * 1024)  /* 64 KiB */
+
+/**
+ * Statistics returned by ndpi_tcp_reassembly_get_stats().
+ */
+typedef struct {
+  u_int32_t next_seq;      /* Next expected sequence number for this direction */
+  u_int32_t ooo_buf_size;  /* Bytes currently buffered as out-of-order data    */
+  u_int32_t ooo_seg_count; /* Number of out-of-order segments currently held   */
+} ndpi_tcp_reassembly_stats;
+
+/**
+ * Callback invoked by the reassembly engine every time a contiguous chunk
+ * of in-order data is ready for consumption.
+ *
+ * @param r          The reassembly handle.
+ * @param direction  0 = client→server, 1 = server→client.
+ * @param seq        TCP sequence number of the first byte in @p data.
+ * @param data       Pointer to the reassembled payload bytes.
+ * @param len        Number of bytes in @p data.
+ * @param userdata   Opaque pointer supplied at allocation time.
+ */
+typedef void (*ndpi_tcp_reassembly_cb_t)(struct ndpi_tcp_reassembly *r,
+                                         u_int8_t        direction,
+                                         u_int32_t       seq,
+                                         const u_int8_t *data,
+                                         u_int16_t       len,
+                                         void           *userdata);
+
 typedef struct {
   u_int32_t num_allocated_entries, num_used_entries;
   struct ndpi_binary_bitmap_entry *entries;
