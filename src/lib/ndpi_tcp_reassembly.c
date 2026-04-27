@@ -65,7 +65,8 @@ struct ndpi_tcp_reassembly {
   struct ndpi_tcp_stream    streams[2];         /* [0]=cli->srv [1]=srv->cli */
   u_int32_t                 max_ooo_buf_size;   /* OOO budget per direction  */
   ndpi_tcp_reassembly_cb_t  callback;           /* Delivery callback         */
-  void                     *userdata;
+  void                     *userdata;           /* Passed to callback        */
+  void                     *ctx;                /* Per-call context; set before ndpi_tcp_reassembly_process(), read by callback via ndpi_tcp_reassembly_get_ctx() */
 };
 
 /* ----------------------------------------------------------------
@@ -409,4 +410,19 @@ void ndpi_tcp_reassembly_reset(struct ndpi_tcp_reassembly *r,
   free_ooo_list(&r->streams[direction]);
   r->streams[direction].next_seq    = 0;
   r->streams[direction].initialized = 0;
+}
+
+/* ---------------------------------------------------------------- */
+
+void ndpi_tcp_reassembly_set_ctx(struct ndpi_tcp_reassembly *r, void *ctx)
+{
+  if(r)
+    r->ctx = ctx;
+}
+
+/* ---------------------------------------------------------------- */
+
+void *ndpi_tcp_reassembly_get_ctx(const struct ndpi_tcp_reassembly *r)
+{
+  return r ? r->ctx : NULL;
 }

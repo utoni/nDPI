@@ -2443,6 +2443,14 @@ extern "C" {
    * Reassembles TCP byte streams from individual segments, handling
    * out-of-order delivery, retransmissions, and overlapping segments.
    *
+   * Integration with protocol dissectors
+   * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   * Protocol dissectors may opt in to per-flow TCP reassembly by calling
+   * ndpi_enable_tcp_reassembly() during dissector registration (inside the
+   * init_*_dissector() function).  This marks the dissector in the framework
+   * and stores a tcp_reassembly handle on ndpi_flow_tcp_struct.tcp_reassembly
+   * once the dissector allocates it (e.g. upon protocol detection).  The
+   * framework frees the handle automatically in ndpi_free_flow_data().
    * Usage example:
    *
    *   void my_cb(struct ndpi_tcp_reassembly *r, u_int8_t dir,
@@ -2533,6 +2541,52 @@ extern "C" {
    */
   void ndpi_tcp_reassembly_reset(struct ndpi_tcp_reassembly *r,
                                  u_int8_t direction);
+
+  /**
+   * Set a per-call context pointer on the reassembly handle.
+   *
+   * This is a convenience slot for dissectors that need to pass an
+   * additional pointer (e.g. the current ndpi_detection_module_struct)
+   * into the reassembly callback without allocating a separate wrapper
+   * struct.  The value must be updated before every call to
+   * ndpi_tcp_reassembly_process() when the context changes.
+   *
+   * @param r    Reassembly handle (may be NULL, in which case this is a no-op).
+   * @param ctx  Context pointer accessible inside the delivery callback via
+   *             ndpi_tcp_reassembly_get_ctx().
+   */
+  void ndpi_tcp_reassembly_set_ctx(struct ndpi_tcp_reassembly *r, void *ctx);
+
+  /**
+   * Retrieve the context pointer previously set with ndpi_tcp_reassembly_set_ctx().
+   *
+   * @param r  Reassembly handle (may be NULL).
+   * @return   The stored context pointer, or NULL if @p r is NULL.
+   */
+  void *ndpi_tcp_reassembly_get_ctx(const struct ndpi_tcp_reassembly *r);
+
+  /**
+   * Mark a protocol dissector as using the TCP reassembly engine.
+   *
+   * Call this from within the dissector's init_*_dissector() function (i.e.
+   * "during dissector registration") to declare that the dissector will
+   * manage a per-flow ndpi_tcp_reassembly handle via
+   * ndpi_flow_tcp_struct::tcp_reassembly.  The framework will automatically
+   * free that handle in ndpi_free_flow_data() when the flow is torn down.
+   *
+   * The dissector is responsible for:
+   *   1. Allocating the handle (ndpi_tcp_reassembly_alloc) upon protocol
+   *      detection and storing it in flow->l4.tcp.tcp_reassembly.
+   *   2. Feeding each TCP segment through ndpi_tcp_reassembly_process().
+   *   3. Setting a per-call context (ndpi_tcp_reassembly_set_ctx) so that
+   *      the reassembly callback can access the current ndpi_str.
+   *
+   * @param ndpi_str    Detection-module handle.
+   * @param protocol_id Protocol ID (NDPI_PROTOCOL_*) whose dissector should
+   *                    be flagged.
+   */
+  void ndpi_enable_tcp_reassembly(struct ndpi_detection_module_struct *ndpi_str,
+                                  u_int16_t protocol_id);
 
   /* ******************************* */
 

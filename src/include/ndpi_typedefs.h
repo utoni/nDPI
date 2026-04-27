@@ -974,6 +974,13 @@ struct ndpi_flow_tcp_struct {
 
   /* Reserved for future use */
   u_int64_t reserved:20;
+
+  /*
+   * Per-flow TCP reassembly engine (allocated lazily by the dissector if
+   * tcp_reassembly_enabled is set for that dissector; freed by the core in
+   * ndpi_free_flow_data).  NULL when not in use.
+   */
+  struct ndpi_tcp_reassembly *tcp_reassembly;
 };
 
 /* ************************************************** */

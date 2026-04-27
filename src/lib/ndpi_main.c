@@ -6787,6 +6787,22 @@ void ndpi_register_dissector(char *dissector_name, struct ndpi_detection_module_
 
 /* ******************************************************************** */
 
+void ndpi_enable_tcp_reassembly(struct ndpi_detection_module_struct *ndpi_str,
+                                u_int16_t protocol_id)
+{
+  u_int16_t dissector_idx;
+
+  if(!ndpi_str)
+    return;
+
+  dissector_idx = ndpi_str->proto_defaults[protocol_id].dissector_idx;
+
+  if(dissector_idx != 0 && dissector_idx < ndpi_str->callback_buffer_num)
+    ndpi_str->callback_buffer[dissector_idx].tcp_reassembly_enabled = 1;
+}
+
+/* ******************************************************************** */
+
 static int dissectors_init(struct ndpi_detection_module_struct *ndpi_str) {
   struct call_function_struct *all_cb = NULL;
 
@@ -8108,6 +8124,11 @@ void ndpi_free_flow_data(struct ndpi_flow_struct* flow) {
         ndpi_free(flow->l4.udp.quic_reasm_buf);
       if(flow->l4.udp.quic_reasm_buf_bitmap)
         ndpi_free(flow->l4.udp.quic_reasm_buf_bitmap);
+    }
+
+    if(flow->l4_proto == IPPROTO_TCP) {
+      if(flow->l4.tcp.tcp_reassembly)
+        ndpi_tcp_reassembly_free(flow->l4.tcp.tcp_reassembly);
     }
 
     if(flow->flow_payload != NULL)

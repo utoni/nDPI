@@ -59,7 +59,9 @@ struct call_function_struct {
   char name[16];                /* Used only for logging/debugging */
   void (*func) (struct ndpi_detection_module_struct *, struct ndpi_flow_struct *flow);
   NDPI_SELECTION_BITMASK_PROTOCOL_SIZE ndpi_selection_bitmask;
-  u_int16_t dissector_idx;
+  u_int16_t dissector_idx:15;   /* NDPI_MAX_NUM_DISSECTORS is 288 (9 bits); 15 bits are used
+                                   to keep the u_int16_t intact for the flag bit below. */
+  u_int16_t tcp_reassembly_enabled:1; /* 1 = dissector opts in to TCP reassembly */
   /* We don't need to keep track of the list of protocols handled by this dissector */
   u_int16_t first_protocol_id;  /* ID of the first protocol registered with this dissector.
                                    It is used ONLY for logging, because logging configuration
@@ -658,6 +660,8 @@ void ndpi_register_dissector(char *dissector_name, struct ndpi_detection_module_
                                      struct ndpi_flow_struct *flow),
                         const NDPI_SELECTION_BITMASK_PROTOCOL_SIZE ndpi_selection_bitmask,
                         int num_protocol_ids, ...);
+void ndpi_enable_tcp_reassembly(struct ndpi_detection_module_struct *ndpi_str,
+                                u_int16_t protocol_id);
 void exclude_dissector(struct ndpi_detection_module_struct *ndpi_str, struct ndpi_flow_struct *flow,
                        u_int16_t dissector_idx, const char *_file, const char *_func, int _line) ;
 
