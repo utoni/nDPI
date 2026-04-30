@@ -1388,6 +1388,12 @@ struct ndpi_tcp_reassembly;  /* Opaque handle – defined in ndpi_tcp_reassembly
 /* Default maximum bytes buffered per direction for out-of-order segments */
 #define NDPI_TCP_REASSEMBLY_DEFAULT_MAX_OOO_BUF  (64 * 1024)  /* 64 KiB */
 
+/* Maximum bytes stored in the accumulation buffer per direction.
+ * Prevents unbounded growth when ndpi_tcp_reassembly_keep() is called
+ * repeatedly.  Newly arriving bytes are silently dropped once this
+ * limit is reached. */
+#define NDPI_TCP_REASSEMBLY_MAX_ACC_BUF          (64 * 1024)  /* 64 KiB */
+
 /**
  * Statistics returned by ndpi_tcp_reassembly_get_stats().
  */

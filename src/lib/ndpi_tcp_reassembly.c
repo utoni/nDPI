@@ -60,13 +60,33 @@ struct ndpi_tcp_stream {
 
 /*
  * Top-level reassembly object returned to the caller.
+ *
+ * Two operating modes:
+ *
+ *  Callback mode   (callback != NULL):
+ *    In-order bytes are delivered immediately to the callback function.
+ *    Used by standalone / unit-test callers.
+ *
+ *  Accumulation mode (callback == NULL):
+ *    In-order bytes are appended to per-direction heap buffers
+ *    (acc_buf[]).  The protocol dissector reads the buffer with
+ *    ndpi_tcp_reassembly_get_buffer(), then either:
+ *      - calls ndpi_tcp_reassembly_keep() to preserve the buffer for
+ *        the next dissector call (accumulate more segments), or
+ *      - does nothing, in which case the framework automatically frees
+ *        the buffer after the dissector returns via
+ *        ndpi_tcp_reassembly_post_extra_packet().
  */
 struct ndpi_tcp_reassembly {
   struct ndpi_tcp_stream    streams[2];         /* [0]=cli->srv [1]=srv->cli */
   u_int32_t                 max_ooo_buf_size;   /* OOO budget per direction  */
-  ndpi_tcp_reassembly_cb_t  callback;           /* Delivery callback         */
+  ndpi_tcp_reassembly_cb_t  callback;           /* Delivery callback (or NULL for accumulation mode) */
   void                     *userdata;           /* Passed to callback        */
-  void                     *ctx;                /* Per-call context; set before ndpi_tcp_reassembly_process(), read by callback via ndpi_tcp_reassembly_get_ctx() */
+  /* Accumulation-mode buffers (only when callback == NULL) */
+  u_int8_t                 *acc_buf[2];         /* per-direction heap buffer */
+  u_int32_t                 acc_len[2];         /* bytes currently stored    */
+  u_int32_t                 acc_cap[2];         /* allocated capacity        */
+  u_int8_t                  acc_keep[2];        /* set by ndpi_tcp_reassembly_keep() */
 };
 
 /* ----------------------------------------------------------------
@@ -79,7 +99,8 @@ static inline int seq_lt(u_int32_t a, u_int32_t b)  { return (int32_t)(a - b) < 
 static inline int seq_leq(u_int32_t a, u_int32_t b) { return (int32_t)(a - b) <= 0; }
 
 /* ----------------------------------------------------------------
- * Helper: deliver data to the user callback
+ * Helper: deliver data — either via callback or into the per-direction
+ * accumulation buffer, depending on which mode is active.
  * ---------------------------------------------------------------- */
 static void deliver(struct ndpi_tcp_reassembly *r,
                     u_int8_t direction,
@@ -87,8 +108,48 @@ static void deliver(struct ndpi_tcp_reassembly *r,
                     const u_int8_t *data,
                     u_int16_t len)
 {
-  if(r->callback && len > 0)
+  if(!r || len == 0)
+    return;
+
+  if(r->callback) {
+    /* Callback mode: deliver immediately */
     r->callback(r, direction, seq, data, len, r->userdata);
+    return;
+  }
+
+  /* Accumulation mode: append to per-direction buffer */
+  if(r->acc_len[direction] + len > r->acc_cap[direction]) {
+    u_int32_t new_cap;
+    u_int8_t *nb;
+
+    /* Hard cap: do not grow beyond NDPI_TCP_REASSEMBLY_MAX_ACC_BUF */
+    if(r->acc_len[direction] >= NDPI_TCP_REASSEMBLY_MAX_ACC_BUF)
+      return; /* buffer full — silently drop; dissector will still see what was accumulated */
+
+    /* Clamp len to the remaining space */
+    if(r->acc_len[direction] + len > NDPI_TCP_REASSEMBLY_MAX_ACC_BUF)
+      len = (u_int16_t)(NDPI_TCP_REASSEMBLY_MAX_ACC_BUF - r->acc_len[direction]);
+
+    new_cap = r->acc_cap[direction] ? r->acc_cap[direction] * 2 : 4096;
+    if(new_cap > NDPI_TCP_REASSEMBLY_MAX_ACC_BUF)
+      new_cap = NDPI_TCP_REASSEMBLY_MAX_ACC_BUF;
+    while(new_cap < r->acc_len[direction] + len)
+      new_cap = NDPI_TCP_REASSEMBLY_MAX_ACC_BUF; /* only one possible value left */
+
+    nb = (u_int8_t *)ndpi_malloc(new_cap);
+    if(!nb)
+      return; /* allocation failure — drop data, buffer unchanged */
+
+    if(r->acc_buf[direction]) {
+      memcpy(nb, r->acc_buf[direction], r->acc_len[direction]);
+      ndpi_free(r->acc_buf[direction]);
+    }
+    r->acc_buf[direction] = nb;
+    r->acc_cap[direction] = new_cap;
+  }
+
+  memcpy(r->acc_buf[direction] + r->acc_len[direction], data, len);
+  r->acc_len[direction] += len;
 }
 
 /* ----------------------------------------------------------------
@@ -298,6 +359,10 @@ void ndpi_tcp_reassembly_free(struct ndpi_tcp_reassembly *r)
 
   free_ooo_list(&r->streams[0]);
   free_ooo_list(&r->streams[1]);
+
+  if(r->acc_buf[0]) ndpi_free(r->acc_buf[0]);
+  if(r->acc_buf[1]) ndpi_free(r->acc_buf[1]);
+
   ndpi_free(r);
 }
 
@@ -410,19 +475,77 @@ void ndpi_tcp_reassembly_reset(struct ndpi_tcp_reassembly *r,
   free_ooo_list(&r->streams[direction]);
   r->streams[direction].next_seq    = 0;
   r->streams[direction].initialized = 0;
+
+  /* Also clear the accumulation buffer for this direction */
+  if(r->acc_buf[direction]) {
+    ndpi_free(r->acc_buf[direction]);
+    r->acc_buf[direction] = NULL;
+    r->acc_len[direction] = 0;
+    r->acc_cap[direction] = 0;
+    r->acc_keep[direction] = 0;
+  }
 }
 
 /* ---------------------------------------------------------------- */
 
-void ndpi_tcp_reassembly_set_ctx(struct ndpi_tcp_reassembly *r, void *ctx)
+const u_int8_t *ndpi_tcp_reassembly_get_buffer(const struct ndpi_tcp_reassembly *r,
+                                               u_int8_t direction,
+                                               u_int32_t *len)
 {
-  if(r)
-    r->ctx = ctx;
+  if(!r || direction > 1) {
+    if(len) *len = 0;
+    return NULL;
+  }
+
+  if(len)
+    *len = r->acc_len[direction];
+
+  return r->acc_len[direction] ? r->acc_buf[direction] : NULL;
 }
 
 /* ---------------------------------------------------------------- */
 
-void *ndpi_tcp_reassembly_get_ctx(const struct ndpi_tcp_reassembly *r)
+void ndpi_tcp_reassembly_discard(struct ndpi_tcp_reassembly *r,
+                                 u_int8_t direction)
 {
-  return r ? r->ctx : NULL;
+  if(!r || direction > 1)
+    return;
+
+  if(r->acc_buf[direction]) {
+    ndpi_free(r->acc_buf[direction]);
+    r->acc_buf[direction] = NULL;
+  }
+  r->acc_len[direction]  = 0;
+  r->acc_cap[direction]  = 0;
+  r->acc_keep[direction] = 0;
+}
+
+/* ---------------------------------------------------------------- */
+
+void ndpi_tcp_reassembly_keep(struct ndpi_tcp_reassembly *r,
+                              u_int8_t direction)
+{
+  if(r && direction <= 1)
+    r->acc_keep[direction] = 1;
+}
+
+/* ----------------------------------------------------------------
+ * Internal framework function (declared in ndpi_private.h):
+ * Called by process_extra_packet() after the dissector returns.
+ * If the dissector requested "keep" (by calling
+ * ndpi_tcp_reassembly_keep()), the accumulated buffer is preserved
+ * and the keep flag is cleared for the next call.
+ * Otherwise the buffer is freed (default "discard" behaviour).
+ * ---------------------------------------------------------------- */
+void ndpi_tcp_reassembly_post_extra_packet(struct ndpi_tcp_reassembly *r,
+                                           u_int8_t direction)
+{
+  if(!r || direction > 1)
+    return;
+
+  if(r->acc_keep[direction]) {
+    r->acc_keep[direction] = 0; /* clear for next round */
+  } else {
+    ndpi_tcp_reassembly_discard(r, direction);
+  }
 }

@@ -662,6 +662,8 @@ void ndpi_register_dissector(char *dissector_name, struct ndpi_detection_module_
                         int num_protocol_ids, ...);
 void ndpi_enable_tcp_reassembly(struct ndpi_detection_module_struct *ndpi_str,
                                 u_int16_t protocol_id);
+void ndpi_tcp_reassembly_post_extra_packet(struct ndpi_tcp_reassembly *r,
+                                           u_int8_t direction);
 void exclude_dissector(struct ndpi_detection_module_struct *ndpi_str, struct ndpi_flow_struct *flow,
                        u_int16_t dissector_idx, const char *_file, const char *_func, int _line) ;
 

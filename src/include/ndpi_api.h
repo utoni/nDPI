@@ -2443,29 +2443,47 @@ extern "C" {
    * Reassembles TCP byte streams from individual segments, handling
    * out-of-order delivery, retransmissions, and overlapping segments.
    *
+   * Two operating modes
+   * -------------------
+   *
+   * Callback mode (callback != NULL):
+   *   In-order bytes are delivered immediately to the registered callback.
+   *   Used by standalone / unit-test callers.
+   *   Example:
+   *
+   *     void my_cb(struct ndpi_tcp_reassembly *r, u_int8_t dir,
+   *                u_int32_t seq, const u_int8_t *data, u_int16_t len,
+   *                void *ud) { ... }
+   *
+   *     struct ndpi_tcp_reassembly *r =
+   *         ndpi_tcp_reassembly_alloc(0, my_cb, NULL);
+   *     ndpi_tcp_reassembly_process(r, dir, seq, syn, payload, plen);
+   *     ndpi_tcp_reassembly_free(r);
+   *
+   * Accumulation mode (callback == NULL):
+   *   In-order bytes are stored in per-direction heap buffers inside the
+   *   engine.  The protocol dissector reads the current accumulated buffer
+   *   with ndpi_tcp_reassembly_get_buffer() and decides whether to:
+   *     - Keep the data (call ndpi_tcp_reassembly_keep()): the buffer is
+   *       preserved; the next dissector call will see all accumulated bytes
+   *       plus any new in-order segments appended since.
+   *     - Discard the data (default — do nothing): the framework calls
+   *       ndpi_tcp_reassembly_post_extra_packet() after the dissector
+   *       returns, which frees the buffer.  The next dissector call will
+   *       only see the new segment.
+   *
    * Integration with protocol dissectors
    * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   * Protocol dissectors may opt in to per-flow TCP reassembly by calling
-   * ndpi_enable_tcp_reassembly() during dissector registration (inside the
-   * init_*_dissector() function).  This marks the dissector in the framework
-   * and stores a tcp_reassembly handle on ndpi_flow_tcp_struct.tcp_reassembly
-   * once the dissector allocates it (e.g. upon protocol detection).  The
-   * framework frees the handle automatically in ndpi_free_flow_data().
-   * Usage example:
-   *
-   *   void my_cb(struct ndpi_tcp_reassembly *r, u_int8_t dir,
-   *              u_int32_t seq, const u_int8_t *data, u_int16_t len,
-   *              void *ud) {
-   *     // process reassembled in-order TCP stream data
-   *   }
-   *
-   *   struct ndpi_tcp_reassembly *r =
-   *       ndpi_tcp_reassembly_alloc(0, my_cb, NULL);
-   *
-   *   // For each TCP segment: parse IP/TCP headers then call:
-   *   ndpi_tcp_reassembly_process(r, direction, seq, syn, payload, plen);
-   *
-   *   ndpi_tcp_reassembly_free(r);
+   * 1. Registration (init_*_dissector): call ndpi_enable_tcp_reassembly().
+   * 2. Detection (ndpi_int_*_add_connection): allocate the handle with
+   *    callback == NULL and store it in flow->l4.tcp.tcp_reassembly.
+   * 3. Extra-packet processing (extra_packets_func): read the accumulated
+   *    buffer with ndpi_tcp_reassembly_get_buffer(); optionally call
+   *    ndpi_tcp_reassembly_keep() to accumulate further.
+   *    The framework feeds each new TCP segment before calling the dissector
+   *    and frees the buffer afterwards (unless ndpi_tcp_reassembly_keep()
+   *    was called).
+   * 4. ndpi_free_flow_data() frees the handle automatically.
    * ----------------------------------------------------------------------- */
 
   /**
@@ -2533,8 +2551,8 @@ extern "C" {
   /**
    * Reset the reassembly state for one direction.
    *
-   * Discards all buffered out-of-order segments and resets the sequence
-   * number tracking.  Useful when a TCP RST is observed.
+   * Discards all buffered out-of-order segments, the accumulated buffer,
+   * and resets sequence number tracking.  Useful when a TCP RST is observed.
    *
    * @param r          Reassembly handle.
    * @param direction  0 = client-to-server, 1 = server-to-client.
@@ -2543,43 +2561,79 @@ extern "C" {
                                  u_int8_t direction);
 
   /**
-   * Set a per-call context pointer on the reassembly handle.
+   * Get the accumulated in-order stream buffer (accumulation mode only).
    *
-   * This is a convenience slot for dissectors that need to pass an
-   * additional pointer (e.g. the current ndpi_detection_module_struct)
-   * into the reassembly callback without allocating a separate wrapper
-   * struct.  The value must be updated before every call to
-   * ndpi_tcp_reassembly_process() when the context changes.
+   * Returns a pointer to all reassembled bytes that have been delivered
+   * since the last ndpi_tcp_reassembly_discard() call.  The buffer is
+   * valid until the next call to ndpi_tcp_reassembly_process(),
+   * ndpi_tcp_reassembly_discard(), or ndpi_tcp_reassembly_free().
    *
-   * @param r    Reassembly handle (may be NULL, in which case this is a no-op).
-   * @param ctx  Context pointer accessible inside the delivery callback via
-   *             ndpi_tcp_reassembly_get_ctx().
+   * @param r          Reassembly handle (may be NULL).
+   * @param direction  0 = client-to-server, 1 = server-to-client.
+   * @param len        Output: number of valid bytes in the returned buffer.
+   * @return           Pointer to the accumulated bytes, or NULL if the
+   *                   buffer is empty or the handle is NULL.
    */
-  void ndpi_tcp_reassembly_set_ctx(struct ndpi_tcp_reassembly *r, void *ctx);
+  const u_int8_t *ndpi_tcp_reassembly_get_buffer(const struct ndpi_tcp_reassembly *r,
+                                                  u_int8_t  direction,
+                                                  u_int32_t *len);
 
   /**
-   * Retrieve the context pointer previously set with ndpi_tcp_reassembly_set_ctx().
+   * Discard the accumulated buffer for one direction (accumulation mode).
    *
-   * @param r  Reassembly handle (may be NULL).
-   * @return   The stored context pointer, or NULL if @p r is NULL.
+   * Frees the per-direction heap buffer.  The next call to
+   * ndpi_tcp_reassembly_process() will start a fresh accumulation from
+   * the next in-order segment only.
+   *
+   * This is the "throw the current segment away" action described for
+   * per-dissector keep/discard behaviour.
+   *
+   * @param r          Reassembly handle (may be NULL).
+   * @param direction  0 = client-to-server, 1 = server-to-client.
    */
-  void *ndpi_tcp_reassembly_get_ctx(const struct ndpi_tcp_reassembly *r);
+  void ndpi_tcp_reassembly_discard(struct ndpi_tcp_reassembly *r,
+                                   u_int8_t direction);
+
+  /**
+   * Request that the accumulated buffer be kept for the next dissector call.
+   *
+   * By default the framework frees the accumulated buffer after each
+   * extra_packets_func invocation.  Calling this function before returning
+   * from the dissector prevents that free: the next call will receive the
+   * current accumulated bytes PLUS any new in-order segments appended in
+   * the interim (i.e. all segments as one contiguous buffer).
+   *
+   * This is the "keep the current segment and request more segments"
+   * action described for per-dissector keep/discard behaviour.
+   *
+   * @param r          Reassembly handle (may be NULL).
+   * @param direction  0 = client-to-server, 1 = server-to-client.
+   */
+  void ndpi_tcp_reassembly_keep(struct ndpi_tcp_reassembly *r,
+                                u_int8_t direction);
 
   /**
    * Mark a protocol dissector as using the TCP reassembly engine.
    *
    * Call this from within the dissector's init_*_dissector() function (i.e.
-   * "during dissector registration") to declare that the dissector will
-   * manage a per-flow ndpi_tcp_reassembly handle via
-   * ndpi_flow_tcp_struct::tcp_reassembly.  The framework will automatically
-   * free that handle in ndpi_free_flow_data() when the flow is torn down.
+   * "during dissector registration") to declare that the dissector uses the
+   * TCP reassembly engine.  Once registered:
+   *
+   *  - The framework automatically feeds each TCP segment to the reassembly
+   *    engine (via ndpi_tcp_reassembly_process()) before calling the
+   *    dissector's extra_packets_func.
+   *  - The framework automatically frees the accumulated buffer after each
+   *    extra_packets_func call (unless the dissector called
+   *    ndpi_tcp_reassembly_keep()).
+   *  - ndpi_free_flow_data() frees the ndpi_tcp_reassembly handle stored in
+   *    flow->l4.tcp.tcp_reassembly when the flow is torn down.
    *
    * The dissector is responsible for:
-   *   1. Allocating the handle (ndpi_tcp_reassembly_alloc) upon protocol
-   *      detection and storing it in flow->l4.tcp.tcp_reassembly.
-   *   2. Feeding each TCP segment through ndpi_tcp_reassembly_process().
-   *   3. Setting a per-call context (ndpi_tcp_reassembly_set_ctx) so that
-   *      the reassembly callback can access the current ndpi_str.
+   *   1. Allocating the handle (ndpi_tcp_reassembly_alloc with callback=NULL)
+   *      upon protocol detection and storing it in flow->l4.tcp.tcp_reassembly.
+   *   2. Reading the reassembled stream via ndpi_tcp_reassembly_get_buffer().
+   *   3. Optionally calling ndpi_tcp_reassembly_keep() to accumulate data
+   *      across multiple calls.
    *
    * @param ndpi_str    Detection-module handle.
    * @param protocol_id Protocol ID (NDPI_PROTOCOL_*) whose dissector should
