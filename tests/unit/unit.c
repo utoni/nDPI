@@ -375,6 +375,213 @@ int serializeProtoUnitTest(void)
 
 /* *********************************************** */
 
+/*
+ * Collected bytes from the reassembly callback for verification.
+ */
+#define REASM_TEST_BUF_SIZE 4096
+static u_int8_t  reasm_collected[2][REASM_TEST_BUF_SIZE];
+static u_int16_t reasm_collected_len[2];
+
+static void reasm_test_cb(struct ndpi_tcp_reassembly *r,
+                          u_int8_t direction,
+                          u_int32_t seq,
+                          const u_int8_t *data,
+                          u_int16_t len,
+                          void *userdata)
+{
+  (void)r; (void)seq; (void)userdata;
+  if(direction > 1) return;
+  if((u_int32_t)reasm_collected_len[direction] + len <= REASM_TEST_BUF_SIZE) {
+    memcpy(&reasm_collected[direction][reasm_collected_len[direction]], data, len);
+    reasm_collected_len[direction] += len;
+  }
+}
+
+static void reasm_reset_collected(void)
+{
+  memset(reasm_collected, 0, sizeof(reasm_collected));
+  reasm_collected_len[0] = reasm_collected_len[1] = 0;
+}
+
+int tcpReassemblyUnitTest(void)
+{
+  struct ndpi_tcp_reassembly *r;
+  ndpi_tcp_reassembly_stats stats;
+
+  /* ---------- 1. Allocation & free (smoke test) ---------- */
+  r = ndpi_tcp_reassembly_alloc(0, NULL, NULL);
+  assert(r != NULL);
+  ndpi_tcp_reassembly_free(r);
+
+  /* ---------- 2. In-order delivery ---------- */
+  reasm_reset_collected();
+  r = ndpi_tcp_reassembly_alloc(0, reasm_test_cb, NULL);
+  assert(r != NULL);
+
+  /* SYN: ISN = 100 */
+  assert(ndpi_tcp_reassembly_process(r, 0, 100, 1, NULL, 0) == 0);
+
+  /* Three in-order segments: "Hello", " ", "World" */
+  assert(ndpi_tcp_reassembly_process(r, 0, 101, 0, (const u_int8_t *)"Hello", 5) == 0);
+  assert(ndpi_tcp_reassembly_process(r, 0, 106, 0, (const u_int8_t *)" ", 1) == 0);
+  assert(ndpi_tcp_reassembly_process(r, 0, 107, 0, (const u_int8_t *)"World", 5) == 0);
+
+  assert(reasm_collected_len[0] == 11);
+  assert(memcmp(reasm_collected[0], "Hello World", 11) == 0);
+
+  ndpi_tcp_reassembly_get_stats(r, 0, &stats);
+  assert(stats.next_seq == 112);
+  assert(stats.ooo_buf_size == 0);
+  assert(stats.ooo_seg_count == 0);
+
+  ndpi_tcp_reassembly_free(r);
+
+  /* ---------- 3. Out-of-order delivery ---------- */
+  reasm_reset_collected();
+  r = ndpi_tcp_reassembly_alloc(0, reasm_test_cb, NULL);
+  assert(r != NULL);
+
+  /* SYN: ISN = 0, so first data byte has seq=1 */
+  assert(ndpi_tcp_reassembly_process(r, 0, 0, 1, NULL, 0) == 0);
+
+  /*
+   * Stream is: "Hello"(seq=1,len=5) " "(seq=6,len=1) "World"(seq=7,len=5)
+   * Send segments 2 and 3 out-of-order before segment 1.
+   */
+  assert(ndpi_tcp_reassembly_process(r, 0, 7, 0, (const u_int8_t *)"World", 5) == 0);
+  assert(ndpi_tcp_reassembly_process(r, 0, 6, 0, (const u_int8_t *)" ", 1) == 0);
+
+  /* Nothing delivered yet */
+  assert(reasm_collected_len[0] == 0);
+
+  ndpi_tcp_reassembly_get_stats(r, 0, &stats);
+  assert(stats.ooo_buf_size == 6);
+  assert(stats.ooo_seg_count == 2);
+
+  /* Now segment 1 arrives – should trigger delivery of all three */
+  assert(ndpi_tcp_reassembly_process(r, 0, 1, 0, (const u_int8_t *)"Hello", 5) == 0);
+
+  assert(reasm_collected_len[0] == 11);
+  assert(memcmp(reasm_collected[0], "Hello World", 11) == 0);
+
+  ndpi_tcp_reassembly_get_stats(r, 0, &stats);
+  assert(stats.ooo_buf_size == 0);
+  assert(stats.ooo_seg_count == 0);
+
+  ndpi_tcp_reassembly_free(r);
+
+  /* ---------- 4. Retransmission (pure duplicate) ---------- */
+  reasm_reset_collected();
+  r = ndpi_tcp_reassembly_alloc(0, reasm_test_cb, NULL);
+  assert(r != NULL);
+
+  assert(ndpi_tcp_reassembly_process(r, 0, 0, 1, NULL, 0) == 0);
+  assert(ndpi_tcp_reassembly_process(r, 0, 1, 0, (const u_int8_t *)"ABCD", 4) == 0);
+  /* Retransmission of exact same segment – must not duplicate data */
+  assert(ndpi_tcp_reassembly_process(r, 0, 1, 0, (const u_int8_t *)"ABCD", 4) == 0);
+
+  assert(reasm_collected_len[0] == 4);
+  assert(memcmp(reasm_collected[0], "ABCD", 4) == 0);
+
+  ndpi_tcp_reassembly_free(r);
+
+  /* ---------- 5. Retransmission with overlapping tail ---------- */
+  reasm_reset_collected();
+  r = ndpi_tcp_reassembly_alloc(0, reasm_test_cb, NULL);
+  assert(r != NULL);
+
+  assert(ndpi_tcp_reassembly_process(r, 0, 0, 1, NULL, 0) == 0);
+  /* Segment 1: bytes 1-4 */
+  assert(ndpi_tcp_reassembly_process(r, 0, 1, 0, (const u_int8_t *)"ABCD", 4) == 0);
+  /* Segment overlapping: bytes 3-6, first two bytes already seen */
+  assert(ndpi_tcp_reassembly_process(r, 0, 3, 0, (const u_int8_t *)"CDEF", 4) == 0);
+
+  /* Should have "ABCDEF" */
+  assert(reasm_collected_len[0] == 6);
+  assert(memcmp(reasm_collected[0], "ABCDEF", 6) == 0);
+
+  ndpi_tcp_reassembly_free(r);
+
+  /* ---------- 6. OOO budget exhaustion ---------- */
+  r = ndpi_tcp_reassembly_alloc(10 /* only 10 bytes OOO budget */,
+                                reasm_test_cb, NULL);
+  assert(r != NULL);
+
+  assert(ndpi_tcp_reassembly_process(r, 0, 0, 1, NULL, 0) == 0);
+  /* Try to buffer 15 bytes out-of-order – should fail (-1) */
+  assert(ndpi_tcp_reassembly_process(r, 0, 100, 0,
+                                     (const u_int8_t *)"123456789012345", 15) == -1);
+
+  ndpi_tcp_reassembly_free(r);
+
+  /* ---------- 7. Reset ---------- */
+  reasm_reset_collected();
+  r = ndpi_tcp_reassembly_alloc(0, reasm_test_cb, NULL);
+  assert(r != NULL);
+
+  assert(ndpi_tcp_reassembly_process(r, 0, 0, 1, NULL, 0) == 0);
+  assert(ndpi_tcp_reassembly_process(r, 0, 1, 0, (const u_int8_t *)"AAA", 3) == 0);
+
+  /* Simulate RST / new connection */
+  ndpi_tcp_reassembly_reset(r, 0);
+
+  ndpi_tcp_reassembly_get_stats(r, 0, &stats);
+  assert(stats.next_seq == 0);
+  assert(stats.ooo_buf_size == 0);
+
+  ndpi_tcp_reassembly_free(r);
+
+  /* ---------- 8. Bidirectional streams are independent ---------- */
+  reasm_reset_collected();
+  r = ndpi_tcp_reassembly_alloc(0, reasm_test_cb, NULL);
+  assert(r != NULL);
+
+  /* Direction 0 (client -> server) */
+  assert(ndpi_tcp_reassembly_process(r, 0, 0, 1, NULL, 0) == 0);
+  assert(ndpi_tcp_reassembly_process(r, 0, 1, 0, (const u_int8_t *)"GET /", 5) == 0);
+
+  /* Direction 1 (server -> client) */
+  assert(ndpi_tcp_reassembly_process(r, 1, 0, 1, NULL, 0) == 0);
+  assert(ndpi_tcp_reassembly_process(r, 1, 1, 0, (const u_int8_t *)"HTTP/1.1", 8) == 0);
+
+  assert(reasm_collected_len[0] == 5);
+  assert(memcmp(reasm_collected[0], "GET /", 5) == 0);
+  assert(reasm_collected_len[1] == 8);
+  assert(memcmp(reasm_collected[1], "HTTP/1.1", 8) == 0);
+
+  ndpi_tcp_reassembly_free(r);
+
+  /* ---------- 9. Sequence number wrap-around ---------- */
+  reasm_reset_collected();
+  r = ndpi_tcp_reassembly_alloc(0, reasm_test_cb, NULL);
+  assert(r != NULL);
+
+  /*
+   * ISN chosen so that data crosses the 32-bit wrap boundary:
+   *   SYN at 0xFFFFFFFC -> next_seq = 0xFFFFFFFD
+   *   "WRAP" (4 bytes) at 0xFFFFFFFD -> wraps to 0x00000001
+   *   "OK"   (2 bytes) at 0x00000001 -> ends at 0x00000003
+   */
+  assert(ndpi_tcp_reassembly_process(r, 0, 0xFFFFFFFCu, 1, NULL, 0) == 0);
+
+  assert(ndpi_tcp_reassembly_process(r, 0, 0xFFFFFFFDu, 0,
+                                     (const u_int8_t *)"WRAP", 4) == 0);
+
+  assert(ndpi_tcp_reassembly_process(r, 0, 0x00000001u, 0,
+                                     (const u_int8_t *)"OK", 2) == 0);
+
+  assert(reasm_collected_len[0] == 6);
+  assert(memcmp(reasm_collected[0], "WRAPOK", 6) == 0);
+
+  ndpi_tcp_reassembly_free(r);
+
+  printf("%30s                      OK\n", __func__);
+
+  return 0;
+}
+
+/* *********************************************** */
+
 int main(int argc, char **argv) {
 #ifndef WIN32
   int c;
@@ -418,6 +625,7 @@ int main(int argc, char **argv) {
   /* Tests */
   if (serializerUnitTest() != 0) return -1;
   if (serializeProtoUnitTest() != 0) return -1;
+  if (tcpReassemblyUnitTest() != 0) return -1;
 
   return 0;
 }

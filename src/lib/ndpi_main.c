@@ -6787,6 +6787,22 @@ void ndpi_register_dissector(char *dissector_name, struct ndpi_detection_module_
 
 /* ******************************************************************** */
 
+void ndpi_enable_tcp_reassembly(struct ndpi_detection_module_struct *ndpi_str,
+                                u_int16_t protocol_id)
+{
+  u_int16_t dissector_idx;
+
+  if(!ndpi_str)
+    return;
+
+  dissector_idx = ndpi_str->proto_defaults[protocol_id].dissector_idx;
+
+  if(dissector_idx != 0 && dissector_idx < ndpi_str->callback_buffer_num)
+    ndpi_str->callback_buffer[dissector_idx].tcp_reassembly_enabled = 1;
+}
+
+/* ******************************************************************** */
+
 static int dissectors_init(struct ndpi_detection_module_struct *ndpi_str) {
   struct call_function_struct *all_cb = NULL;
 
@@ -8108,6 +8124,11 @@ void ndpi_free_flow_data(struct ndpi_flow_struct* flow) {
         ndpi_free(flow->l4.udp.quic_reasm_buf);
       if(flow->l4.udp.quic_reasm_buf_bitmap)
         ndpi_free(flow->l4.udp.quic_reasm_buf_bitmap);
+    }
+
+    if(flow->l4_proto == IPPROTO_TCP) {
+      if(flow->l4.tcp.tcp_reassembly)
+        ndpi_tcp_reassembly_free(flow->l4.tcp.tcp_reassembly);
     }
 
     if(flow->flow_payload != NULL)
@@ -9733,9 +9754,33 @@ static void process_extra_packet(struct ndpi_detection_module_struct *ndpi_str,
 
   /* Workaround: safety check to skip non TCP/UDP packets sent to extra dissectors (see #2762) */
   if(((packet->udp != NULL) || (packet->tcp != NULL))) {
+    /*
+     * If the flow has TCP reassembly active, feed the current segment into
+     * the engine BEFORE calling the dissector.  The engine accumulates the
+     * in-order bytes into an internal buffer that the dissector can read via
+     * ndpi_tcp_reassembly_get_buffer().  After the dissector returns the
+     * buffer is freed unless the dissector called ndpi_tcp_reassembly_keep().
+     */
+    if(packet->tcp && flow->l4.tcp.tcp_reassembly
+       && packet->payload && packet->payload_packet_len > 0) {
+      ndpi_tcp_reassembly_process(flow->l4.tcp.tcp_reassembly,
+                                  packet->packet_direction,
+                                  ntohl(packet->tcp->seq),
+                                  0 /* SYN already handled before extra-packet phase */,
+                                  packet->payload,
+                                  packet->payload_packet_len);
+    }
+
     if((flow->extra_packets_func(ndpi_str, flow) == 0) ||
        (flow->state != NDPI_STATE_MONITORING && ++flow->num_extra_packets_checked == flow->max_extra_packets_to_check)) {
       flow->extra_packets_func = NULL; /* Done */
+    }
+
+    /* Post-dissector: discard the accumulated buffer (unless the dissector
+     * called ndpi_tcp_reassembly_keep() to request another round). */
+    if(packet->tcp && flow->l4.tcp.tcp_reassembly) {
+      ndpi_tcp_reassembly_post_extra_packet(flow->l4.tcp.tcp_reassembly,
+                                            packet->packet_direction);
     }
   }
 }

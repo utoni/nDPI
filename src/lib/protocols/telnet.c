@@ -37,30 +37,43 @@
 static int search_telnet_again(struct ndpi_detection_module_struct *ndpi_struct,
 			       struct ndpi_flow_struct *flow) {
   struct ndpi_packet_struct *packet = &ndpi_struct->packet;
+  const u_int8_t *data = packet->payload;
+  u_int16_t data_len   = packet->payload_packet_len;
   int i;
 
+  /* If TCP reassembly is active, use the accumulated in-order buffer */
+  if(flow->l4.tcp.tcp_reassembly) {
+    u_int32_t rlen = 0;
+    const u_int8_t *rbuf = ndpi_tcp_reassembly_get_buffer(
+        flow->l4.tcp.tcp_reassembly, packet->packet_direction, &rlen);
+    if(rbuf && rlen > 0) {
+      data     = rbuf;
+      data_len = (rlen > 0xFFFF) ? 0xFFFF : (u_int16_t)rlen;
+    }
+  }
+
 #ifdef TELNET_DEBUG
-  printf("==> %s() [%.*s][direction: %u]\n", __FUNCTION__, packet->payload_packet_len,
-	 packet->payload, packet->packet_direction);
+  printf("==> %s() [%.*s][direction: %u]\n", __FUNCTION__, data_len,
+	 data, packet->packet_direction);
 #endif
   
-  if((packet->payload == NULL)
-     || (packet->payload_packet_len == 0)
-     || (packet->payload[0] == 0xFF))
+  if((data == NULL)
+     || (data_len == 0)
+     || (data[0] == 0xFF))
     return(1);
 
   if(flow->protos.telnet.username_detected) {
     if((!flow->protos.telnet.password_found)
-	&& (packet->payload_packet_len > 9)) {
+	&& (data_len > 9)) {
 	
-      if(strncasecmp((char*)packet->payload, "password:", 9) == 0) {
+      if(strncasecmp((char*)data, "password:", 9) == 0) {
 	flow->protos.telnet.password_found = 1;
       }
 
       return(1);
     }
       
-    if(packet->payload[0] == '\r' || packet->payload[0] == '\n') {
+    if(data[0] == '\r' || data[0] == '\n') {
       if(!flow->protos.telnet.password_found)
 	return(1);
 	
@@ -71,9 +84,9 @@ static int search_telnet_again(struct ndpi_detection_module_struct *ndpi_struct,
     }
 
     if(packet->packet_direction == 0) /* client -> server */ {
-      for(i=0; i<packet->payload_packet_len; i++) {
+      for(i=0; i<data_len; i++) {
 	if(flow->protos.telnet.character_id < (sizeof(flow->protos.telnet.password)-1))
-	  flow->protos.telnet.password[flow->protos.telnet.character_id++] = packet->payload[i];
+	  flow->protos.telnet.password[flow->protos.telnet.character_id++] = data[i];
       }
     }
 
@@ -81,16 +94,16 @@ static int search_telnet_again(struct ndpi_detection_module_struct *ndpi_struct,
   }
 
   if((!flow->protos.telnet.username_found)
-     && (packet->payload_packet_len > 6)) {
+     && (data_len > 6)) {
 
-    if(strncasecmp((char*)packet->payload, "login:", 6) == 0) {
+    if(strncasecmp((char*)data, "login:", 6) == 0) {
       flow->protos.telnet.username_found = 1;
     }
 
     return(1);
   }
 
-  if(packet->payload[0] == '\r' || packet->payload[0] == '\n') {
+  if(data[0] == '\r' || data[0] == '\n') {
     char buf[64];
     
     flow->protos.telnet.username_detected = 1;
@@ -104,20 +117,20 @@ static int search_telnet_again(struct ndpi_detection_module_struct *ndpi_struct,
     return(1);
   }
 
-  for(i=0; i<packet->payload_packet_len; i++) {
+  for(i=0; i<data_len; i++) {
     if(packet->packet_direction == 0) /* client -> server */ {
       if(flow->protos.telnet.character_id < (sizeof(flow->protos.telnet.username)-1))
       {
-        if (i>=packet->payload_packet_len-2 &&
-            (packet->payload[i] == '\r' || packet->payload[i] == '\n'))
+        if (i>=data_len-2 &&
+            (data[i] == '\r' || data[i] == '\n'))
         {
           continue;
         }
-        else if (ndpi_isprint(packet->payload[i]) == 0)
+        else if (ndpi_isprint(data[i]) == 0)
         {
           flow->protos.telnet.username[flow->protos.telnet.character_id++] = '?';
         } else {
-          flow->protos.telnet.username[flow->protos.telnet.character_id++] = packet->payload[i];
+          flow->protos.telnet.username[flow->protos.telnet.character_id++] = data[i];
         }
       }
     }
@@ -133,6 +146,12 @@ static void ndpi_int_telnet_add_connection(struct ndpi_detection_module_struct
 					   *ndpi_struct, struct ndpi_flow_struct *flow) {
   flow->max_extra_packets_to_check = 64;
   flow->extra_packets_func = search_telnet_again;
+
+  /* Allocate per-flow TCP reassembly handle (accumulation mode: NULL callback).
+   * The framework feeds each segment before calling search_telnet_again and
+   * frees the accumulated buffer afterwards (default discard behaviour). */
+  if(!flow->l4.tcp.tcp_reassembly)
+    flow->l4.tcp.tcp_reassembly = ndpi_tcp_reassembly_alloc(0, NULL, NULL);
 
   ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_TELNET, NDPI_PROTOCOL_UNKNOWN, NDPI_CONFIDENCE_DPI);
 }
@@ -206,4 +225,9 @@ void init_telnet_dissector(struct ndpi_detection_module_struct *ndpi_struct)
                      ndpi_search_telnet_tcp,
                      NDPI_SELECTION_BITMASK_PROTOCOL_V4_V6_TCP_WITH_PAYLOAD_WITHOUT_RETRANSMISSION,
                      1, NDPI_PROTOCOL_TELNET);
+  /* Register this dissector as a TCP-reassembly user so that the framework:
+   *  - feeds each TCP segment to the engine before calling search_telnet_again
+   *  - frees the accumulated buffer after each call (default discard)
+   *  - frees flow->l4.tcp.tcp_reassembly in ndpi_free_flow_data() */
+  ndpi_enable_tcp_reassembly(ndpi_struct, NDPI_PROTOCOL_TELNET);
 }
